@@ -7,28 +7,60 @@
 
 <style>
 body {
-  font-family: system-ui;
+  font-family: system-ui, -apple-system, sans-serif;
   max-width: 720px;
   margin: 20px auto;
   padding: 12px;
+  line-height: 1.5;
 }
 
-input, button {
+input, button, select {
   width: 100%;
   margin: 8px 0;
   padding: 10px;
   font-size: 16px;
+  box-sizing: border-box;
+}
+
+button {
+  background: #0066cc;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+button:disabled {
+  background: #999;
+  cursor: not-allowed;
 }
 
 #progress {
   width: 100%;
   height: 20px;
+  margin: 10px 0;
 }
+
 #log {
   white-space: pre-wrap;
   background: #f4f4f4;
   padding: 10px;
   margin-top: 10px;
+  max-height: 300px;
+  overflow-y: auto;
+  font-family: monospace;
+  font-size: 14px;
+}
+
+a.download-link {
+  display: inline-block;
+  margin-top: 10px;
+  padding: 10px 20px;
+  background: #28a745;
+  color: white;
+  text-decoration: none;
+  border-radius: 4px;
 }
 </style>
 </head>
@@ -40,97 +72,141 @@ input, button {
 <input type="file" id="image" accept="image/*">
 <input type="file" id="audio" accept="audio/*">
 
-<label>Start Time (seconds)</label>
-<input type="number" id="start" placeholder="0">
-
-<label>Duration (seconds)</label>
-<input type="number" id="duration" placeholder="optional">
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+  <div>
+    <label>Start Time (seconds)</label>
+    <input type="number" id="start" value="0" min="0" step="0.1">
+  </div>
+  <div>
+    <label>Duration (seconds, optional)</label>
+    <input type="number" id="duration" placeholder="optional" min="0" step="0.1">
+  </div>
+</div>
 
 <button id="run">Create Video</button>
 
-<progress id="progress" value="0" max="1"></progress>
+<progress id="progress" value="0" max="1" style="display:none;"></progress>
 
 <div id="log"></div>
 
 <script type="module">
 import { FFmpeg } from "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js";
-import { fetchFile } from "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js";
+import { fetchFile, toBlobURL } from "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js";
 
-const log = (t) => document.getElementById("log").textContent += t + "\n";
-const progress = document.getElementById("progress");
+const logEl = document.getElementById("log");
+const progressEl = document.getElementById("progress");
+const runBtn = document.getElementById("run");
+
+const log = (t) => {
+  logEl.textContent += t + "\n";
+  logEl.scrollTop = logEl.scrollHeight;
+};
 
 const ffmpeg = new FFmpeg();
 
-// CRITICAL FIX: explicitly define core paths (this prevents Android hang)
 ffmpeg.on("log", ({ message }) => log(message));
-
 ffmpeg.on("progress", ({ progress: p }) => {
-  progress.value = p;
+  progressEl.value = p;
 });
 
-async function loadFFmpeg() {
-  log("Loading FFmpeg...");
+async function sanitizeFilename(name) {
+  return name.replace(/[^a-zA-Z0-9._-]/g, '_');
+}
 
+async function loadFFmpeg() {
+  log("Loading FFmpeg (this may take a moment)...");
+  progressEl.style.display = "block";
+  
+  // Use consistent versions and toBlobURL for better reliability (especially on mobile)
+  const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm';
+  
   await ffmpeg.load({
-    coreURL: "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.js",
-    wasmURL: "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.wasm",
-    workerURL: "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm/ffmpeg-core.worker.js",
+    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+    workerURL: await toBlobURL(`${baseURL}/ffmpeg-core.worker.js`, 'text/javascript'),
   });
 
-  log("FFmpeg loaded.");
+  log("FFmpeg loaded successfully.");
+  progressEl.style.display = "none";
 }
 
 document.getElementById("run").onclick = async () => {
-  const img = document.getElementById("image").files[0];
-  const aud = document.getElementById("audio").files[0];
-
-  const start = document.getElementById("start").value;
+  const imgFile = document.getElementById("image").files[0];
+  const audFile = document.getElementById("audio").files[0];
+  
+  const startTime = document.getElementById("start").value || "0";
   const duration = document.getElementById("duration").value;
 
-  if (!img || !aud) {
-    alert("Select image and audio");
+  if (!imgFile || !audFile) {
+    alert("Please select both an image and an audio file.");
     return;
   }
 
-  await loadFFmpeg();
+  runBtn.disabled = true;
+  logEl.textContent = "";
+  progressEl.value = 0;
 
-  await ffmpeg.writeFile(img.name, await fetchFile(img));
-  await ffmpeg.writeFile(aud.name, await fetchFile(aud));
+  try {
+    await loadFFmpeg();
 
-  const args = [
-    "-loop", "1",
-    "-i", img.name,
-    "-ss", start || "0",
-    "-i", aud.name,
-    "-c:v", "libx264",
-    "-pix_fmt", "yuv420p",
-    "-c:a", "aac",
-    "-b:a", "192k",
-    "-shortest"
-  ];
+    const safeImgName = await sanitizeFilename(imgFile.name);
+    const safeAudName = await sanitizeFilename(audFile.name);
 
-  if (duration && Number(duration) > 0) {
-    args.push("-t", String(duration));
+    log(`Writing files: ${safeImgName}, ${safeAudName}`);
+    await ffmpeg.writeFile(safeImgName, await fetchFile(imgFile));
+    await ffmpeg.writeFile(safeAudName, await fetchFile(audFile));
+
+    const args = [
+      "-loop", "1",
+      "-i", safeImgName,
+      "-ss", startTime,
+      "-i", safeAudName,
+      "-c:v", "libx264",
+      "-tune", "stillimage",     // Better quality for static images
+      "-pix_fmt", "yuv420p",
+      "-c:a", "aac",
+      "-b:a", "192k",
+      "-shortest"
+    ];
+
+    if (duration && Number(duration) > 0) {
+      args.push("-t", String(duration));
+    }
+
+    args.push("output.mp4");
+
+    log("Starting FFmpeg processing...");
+    await ffmpeg.exec(args);
+
+    const data = await ffmpeg.readFile("output.mp4");
+    
+    const blob = new Blob([data.buffer], { type: "video/mp4" });
+    const url = URL.createObjectURL(blob);
+
+    // Create download link
+    const downloadLink = document.createElement("a");
+    downloadLink.href = url;
+    downloadLink.download = "output.mp4";
+    downloadLink.textContent = "⬇️ Download Video";
+    downloadLink.className = "download-link";
+    logEl.appendChild(downloadLink);
+
+    // Optional: Auto-play preview
+    const videoPreview = document.createElement("video");
+    videoPreview.src = url;
+    videoPreview.controls = true;
+    videoPreview.style.width = "100%";
+    videoPreview.style.marginTop = "15px";
+    logEl.appendChild(videoPreview);
+
+    log("✅ Processing complete! Video ready.");
+  } catch (error) {
+    console.error(error);
+    log(`❌ Error: ${error.message}`);
+    alert("An error occurred during processing. Check the log for details.");
+  } finally {
+    runBtn.disabled = false;
   }
-
-  args.push("output.mp4");
-
-  log("Processing...");
-  await ffmpeg.exec(args);
-
-  const data = await ffmpeg.readFile("output.mp4");
-
-  const url = URL.createObjectURL(
-    new Blob([data.buffer], { type: "video/mp4" })
-  );
-
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "output.mp4";
-  a.textContent = "Download Video";
-  document.body.appendChild(a);
-
-  log("Done.");
 };
 </script>
 
