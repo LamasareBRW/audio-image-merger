@@ -47,20 +47,21 @@ button:disabled {
   background: #f4f4f4;
   padding: 10px;
   margin-top: 10px;
-  max-height: 300px;
+  max-height: 400px;
   overflow-y: auto;
   font-family: monospace;
   font-size: 14px;
 }
 
-a.download-link {
+.download-link {
   display: inline-block;
   margin-top: 10px;
-  padding: 10px 20px;
+  padding: 12px 24px;
   background: #28a745;
   color: white;
   text-decoration: none;
   border-radius: 4px;
+  font-weight: bold;
 }
 </style>
 </head>
@@ -109,24 +110,25 @@ ffmpeg.on("progress", ({ progress: p }) => {
   progressEl.value = p;
 });
 
-async function sanitizeFilename(name) {
-  return name.replace(/[^a-zA-Z0-9._-]/g, '_');
-}
-
 async function loadFFmpeg() {
-  log("Loading FFmpeg (this may take a moment)...");
+  log("Loading FFmpeg... (this may take 10-20 seconds)");
   progressEl.style.display = "block";
-  
-  // Use consistent versions and toBlobURL for better reliability (especially on mobile)
+
   const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm';
-  
+
+  const [coreURL, wasmURL, workerURL] = await Promise.all([
+    toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+    toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+    toBlobURL(`${baseURL}/ffmpeg-core.worker.js`, 'text/javascript'),
+  ]);
+
   await ffmpeg.load({
-    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-    workerURL: await toBlobURL(`${baseURL}/ffmpeg-core.worker.js`, 'text/javascript'),
+    coreURL,
+    wasmURL,
+    workerURL,
   });
 
-  log("FFmpeg loaded successfully.");
+  log("✅ FFmpeg loaded successfully.");
   progressEl.style.display = "none";
 }
 
@@ -149,20 +151,19 @@ document.getElementById("run").onclick = async () => {
   try {
     await loadFFmpeg();
 
-    const safeImgName = await sanitizeFilename(imgFile.name);
-    const safeAudName = await sanitizeFilename(audFile.name);
+    const imgName = imgFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const audName = audFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
 
-    log(`Writing files: ${safeImgName}, ${safeAudName}`);
-    await ffmpeg.writeFile(safeImgName, await fetchFile(imgFile));
-    await ffmpeg.writeFile(safeAudName, await fetchFile(audFile));
+    await ffmpeg.writeFile(imgName, await fetchFile(imgFile));
+    await ffmpeg.writeFile(audName, await fetchFile(audFile));
 
     const args = [
       "-loop", "1",
-      "-i", safeImgName,
+      "-i", imgName,
       "-ss", startTime,
-      "-i", safeAudName,
+      "-i", audName,
       "-c:v", "libx264",
-      "-tune", "stillimage",     // Better quality for static images
+      "-tune", "stillimage",
       "-pix_fmt", "yuv420p",
       "-c:a", "aac",
       "-b:a", "192k",
@@ -175,35 +176,32 @@ document.getElementById("run").onclick = async () => {
 
     args.push("output.mp4");
 
-    log("Starting FFmpeg processing...");
+    log("Processing...");
     await ffmpeg.exec(args);
 
     const data = await ffmpeg.readFile("output.mp4");
-    
     const blob = new Blob([data.buffer], { type: "video/mp4" });
     const url = URL.createObjectURL(blob);
 
-    // Create download link
-    const downloadLink = document.createElement("a");
-    downloadLink.href = url;
-    downloadLink.download = "output.mp4";
-    downloadLink.textContent = "⬇️ Download Video";
-    downloadLink.className = "download-link";
-    logEl.appendChild(downloadLink);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "output.mp4";
+    link.textContent = "⬇️ Download Video";
+    link.className = "download-link";
+    logEl.appendChild(link);
 
-    // Optional: Auto-play preview
-    const videoPreview = document.createElement("video");
-    videoPreview.src = url;
-    videoPreview.controls = true;
-    videoPreview.style.width = "100%";
-    videoPreview.style.marginTop = "15px";
-    logEl.appendChild(videoPreview);
+    const video = document.createElement("video");
+    video.src = url;
+    video.controls = true;
+    video.style.width = "100%";
+    video.style.marginTop = "15px";
+    logEl.appendChild(video);
 
-    log("✅ Processing complete! Video ready.");
-  } catch (error) {
-    console.error(error);
-    log(`❌ Error: ${error.message}`);
-    alert("An error occurred during processing. Check the log for details.");
+    log("✅ Done! Video created successfully.");
+  } catch (err) {
+    console.error(err);
+    log(`❌ Error: ${err.message}`);
+    alert("Error occurred. Check console and log.");
   } finally {
     runBtn.disabled = false;
   }
