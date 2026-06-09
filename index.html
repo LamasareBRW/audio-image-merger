@@ -1,4 +1,4 @@
-36
+99
 <!DOCTYPE html>
 <html>
 <head>
@@ -32,6 +32,8 @@ button:disabled { background: #999; cursor: not-allowed; }
 <progress id="progress" value="0" max="1" style="display:none;"></progress>
 <div id="log"></div>
 
+<script src="coi-serviceworker.js"></script>
+
 <script type="module">
 import { FFmpeg } from "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js";
 import { fetchFile, toBlobURL } from "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js";
@@ -40,26 +42,17 @@ const logEl = document.getElementById("log");
 const progressEl = document.getElementById("progress");
 const runBtn = document.getElementById("run");
 
-const log = (t) => { logEl.textContent += t + "\n"; logEl.scrollTop = logEl.scrollHeight; };
+const log = (t) => { 
+  logEl.textContent += t + "\n"; 
+  logEl.scrollTop = logEl.scrollHeight; 
+};
 
 const ffmpeg = new FFmpeg();
 ffmpeg.on("log", ({ message }) => log(message));
 ffmpeg.on("progress", ({ progress: p }) => { progressEl.value = p; });
 
-// Register Service Worker for COOP/COEP headers
-async function registerSW() {
-  if ('serviceWorker' in navigator) {
-    try {
-      await navigator.serviceWorker.register('sw.js');
-      log("✅ Service Worker registered");
-    } catch (e) {
-      log("⚠️ Service Worker registration failed (some browsers block it)");
-    }
-  }
-}
-
 async function loadFFmpeg() {
-  log("Loading FFmpeg... (10-30s first time)");
+  log("Loading FFmpeg... (first time can take 15-30 seconds)");
   progressEl.style.display = "block";
 
   const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm';
@@ -71,7 +64,8 @@ async function loadFFmpeg() {
   ]);
 
   await ffmpeg.load({ coreURL, wasmURL, workerURL });
-  log("✅ FFmpeg loaded");
+  
+  log("✅ FFmpeg loaded successfully");
   progressEl.style.display = "none";
 }
 
@@ -81,13 +75,12 @@ document.getElementById("run").onclick = async () => {
   const startTime = document.getElementById("start").value || "0";
   const duration = document.getElementById("duration").value;
 
-  if (!imgFile || !audFile) return alert("Select image and audio");
+  if (!imgFile || !audFile) return alert("Please select both image and audio");
 
   runBtn.disabled = true;
   logEl.textContent = "";
 
   try {
-    await registerSW();
     await loadFFmpeg();
 
     const imgName = imgFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -103,7 +96,7 @@ document.getElementById("run").onclick = async () => {
     if (duration && Number(duration) > 0) args.push("-t", String(duration));
     args.push("output.mp4");
 
-    log("Processing...");
+    log("Processing video...");
     await ffmpeg.exec(args);
 
     const data = await ffmpeg.readFile("output.mp4");
@@ -111,18 +104,23 @@ document.getElementById("run").onclick = async () => {
     const url = URL.createObjectURL(blob);
 
     const link = document.createElement("a");
-    link.href = url; link.download = "output.mp4"; link.textContent = "⬇️ Download Video";
+    link.href = url; 
+    link.download = "output.mp4"; 
+    link.textContent = "⬇️ Download Video";
     link.className = "download-link";
     logEl.appendChild(link);
 
     const video = document.createElement("video");
-    video.src = url; video.controls = true; video.style.width = "100%"; video.style.marginTop = "10px";
+    video.src = url; 
+    video.controls = true; 
+    video.style.width = "100%"; 
+    video.style.marginTop = "10px";
     logEl.appendChild(video);
 
-    log("✅ Done!");
+    log("✅ Video created successfully!");
   } catch (err) {
     console.error(err);
-    log(`❌ ${err.message}`);
+    log(`❌ Error: ${err.message}`);
   } finally {
     runBtn.disabled = false;
   }
