@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Audio Image Merger</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:700px;margin:20px auto;padding:10px}
+button{padding:10px 16px;font-size:16px}
+input{display:block;margin:10px 0}
+#log{white-space:pre-wrap;border:1px solid #ccc;padding:10px;margin-top:10px}
+</style>
+</head>
+<body>
+<h2>Audio + Image → Video</h2>
+<p>Select an image and an audio file. Optionally set a maximum video length in seconds.</p>
+
+<input type="file" id="image" accept="image/*">
+<input type="file" id="audio" accept="audio/*">
+
+<label>Maximum Length (seconds, optional)</label>
+<input type="number" id="duration" min="1" step="1" placeholder="e.g. 60">
+
+<button id="merge">Create Video</button>
+
+<div id="log"></div>
+
+<script type="module">
+import { FFmpeg } from 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js';
+import { fetchFile } from 'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js';
+
+const log = (m)=>document.getElementById('log').textContent += m + "\\n";
+
+document.getElementById('merge').onclick = async () => {
+  const img = document.getElementById('image').files[0];
+  const aud = document.getElementById('audio').files[0];
+  const duration = document.getElementById('duration').value;
+
+  if(!img || !aud){
+    alert('Select both files.');
+    return;
+  }
+
+  const ffmpeg = new FFmpeg();
+  ffmpeg.on('log', ({message}) => log(message));
+
+  log('Loading FFmpeg...');
+  await ffmpeg.load();
+
+  await ffmpeg.writeFile(img.name, await fetchFile(img));
+  await ffmpeg.writeFile(aud.name, await fetchFile(aud));
+
+  const args = [
+    '-loop','1',
+    '-i', img.name,
+    '-i', aud.name,
+    '-c:v','libx264',
+    '-pix_fmt','yuv420p',
+    '-c:a','copy'
+  ];
+
+  if (duration && Number(duration) > 0) {
+    args.push('-t', String(duration));
+  } else {
+    args.push('-shortest');
+  }
+
+  args.push('output.mp4');
+
+  log('Creating video...');
+  await ffmpeg.exec(args);
+
+  const data = await ffmpeg.readFile('output.mp4');
+  const blob = new Blob([data.buffer], {type:'video/mp4'});
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'output.mp4';
+  a.textContent = 'Download Video';
+  document.body.appendChild(a);
+
+  log('Done.');
+};
+</script>
+</body>
+</html>
